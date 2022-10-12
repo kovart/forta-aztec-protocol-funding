@@ -23,7 +23,7 @@ describe('Forta agent', () => {
       });
       const [aztecAddress1, aztecAddress2] = [createAddress('0x1'), createAddress('0x2')];
       const config: BotConfig = {
-        observationDays: 21,
+        addressLimit: 10000,
         aztecAddressByChainId: { [network]: [aztecAddress1, aztecAddress2] },
         developerAbbreviation: 'TEST',
       };
@@ -33,7 +33,7 @@ describe('Forta agent', () => {
 
       expect(data.isInitialized).toStrictEqual(true);
       expect(data.isDevelopment).toStrictEqual(true);
-      expect(data.aztecAddresses).toContain([aztecAddress1, aztecAddress2]);
+      expect(data.aztecAddresses).toEqual(expect.arrayContaining([aztecAddress1, aztecAddress2]));
       expect(data.logger).toStrictEqual(logger);
       expect(data.provider).toStrictEqual(provider);
     });
@@ -52,7 +52,7 @@ describe('Forta agent', () => {
     const defaultBotConfig: BotConfig = {
       developerAbbreviation: 'TEST',
       aztecAddressByChainId: { [defaultNetwork]: [aztecAddress1] },
-      observationDays: 31 * 6, // 6 months
+      addressLimit: 10000,
     };
 
     // mock getCode so that agent knows whether the address is a contract or not
@@ -163,20 +163,29 @@ describe('Forta agent', () => {
       tx.setTo(someContractAddress);
       findings = await handleTransaction(tx);
 
-      expect(findings).toStrictEqual([createFinding()]);
+      expect(findings).toStrictEqual([createFinding(tx.from, tx.to!)]);
     });
 
-    it('handles observation period properly', async () => {
-      async function emulateFundingAndContractInteraction(
-        targetAddress: string,
-        initialTimestamp: number,
-        interactionTimestamp: number,
-      ) {
-        let tx: TestTransactionEvent;
+    it('removes old funded accounts when address limit is exceeded', async () => {
+      const addressLimit = 10;
+      const data: DataContainer = {} as any;
+      const config: BotConfig = {
+        ...defaultBotConfig,
+        addressLimit: addressLimit,
+      };
+      const initialize = provideInitialize(
+        data,
+        config,
+        mockProvider,
+        new Logger(LoggerLevel.ERROR),
+        false,
+      );
+      const handleTransaction = provideHandleTransaction(data);
 
-        // funding from Aztec contract
-        tx = new TestTransactionEvent();
-        tx.setTimestamp(initialTimestamp);
+      await initialize();
+
+      async function emulateFunding(targetAddress: string) {
+        const tx = new TestTransactionEvent();
         tx.setFrom(invokerAddress);
         tx.setTo(aztecAddress1);
         tx.addTraces({
@@ -184,36 +193,35 @@ describe('Forta agent', () => {
           to: targetAddress,
           value: ethers.utils.parseEther('0.5').toHexString(),
         });
+        return await handleTransaction(tx);
+      }
 
-        const findings = await handleTransaction(tx);
-
-        expect(findings).toStrictEqual([]);
-
-        // interaction with some contract
-        tx = new TestTransactionEvent();
-        tx.setTimestamp(interactionTimestamp);
+      async function emulateInteraction(targetAddress: string) {
+        const tx = new TestTransactionEvent();
         tx.setFrom(targetAddress);
         tx.setTo(someContractAddress);
         return await handleTransaction(tx);
       }
 
-      const initialTimestamp = Math.floor(Date.now() / 1000);
+      const getTestAddress = (i: number) => createAddress('0x110000' + i);
 
-      let findings = emulateFundingAndContractInteraction(
-        '0x9988',
-        initialTimestamp,
-        initialTimestamp + defaultBotConfig.observationDays * 24 * 60 * 60,
-      );
+      // emulate Aztec funding
+      for (let i = 0; i < addressLimit; i++) {
+        const address = getTestAddress(i);
+        const findings = await emulateFunding(address);
+        expect(findings).toStrictEqual([]);
+      }
 
-      expect(findings).toStrictEqual([createFinding()]);
+      // check if we detect contract interaction
+      let findings = await emulateInteraction(getTestAddress(0));
+      expect(findings).toHaveLength(1);
 
-      findings = emulateFundingAndContractInteraction(
-        '0x9977',
-        initialTimestamp,
-        initialTimestamp + defaultBotConfig.observationDays * 24 * 60 * 60 + 1,
-      );
-
-      expect(findings).toStrictEqual([]);
+      // add one more funded account that causes the storage to be exceeded
+      await emulateFunding(getTestAddress(addressLimit));
+      // check if we detect contract interaction of the address that should have been removed
+      findings = await emulateInteraction(getTestAddress(0));
+      // we should not fire any findings
+      expect(findings).toHaveLength(0);
     });
 
     it.todo(

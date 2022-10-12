@@ -36,7 +36,8 @@
   "dependencies": {
     "ethers": "^5.7.1",
     "forta-agent": "^0.1.10",
-    "forta-agent-tools": "^3.1.0"
+    "forta-agent-tools": "^3.1.0",
+    "graphology": "^0.25.0"
   },
   "devDependencies": {
     "@types/jest": "^29.0.3",
