@@ -24,7 +24,7 @@ describe('Forta agent', () => {
       const [aztecAddress1, aztecAddress2] = [createAddress('0x1'), createAddress('0x2')];
       const config: BotConfig = {
         addressLimit: 10000,
-        aztecAddressByChainId: { [network]: [aztecAddress1, aztecAddress2] },
+        aztecAddressesByChainId: { [network]: [aztecAddress1, aztecAddress2] },
         developerAbbreviation: 'TEST',
       };
       const initialize = provideInitialize(data, config, provider, logger, true);
@@ -51,7 +51,7 @@ describe('Forta agent', () => {
     const defaultNetwork = Network.MAINNET;
     const defaultBotConfig: BotConfig = {
       developerAbbreviation: 'TEST',
-      aztecAddressByChainId: { [defaultNetwork]: [aztecAddress1] },
+      aztecAddressesByChainId: { [defaultNetwork]: [aztecAddress1] },
       addressLimit: 10000,
     };
 

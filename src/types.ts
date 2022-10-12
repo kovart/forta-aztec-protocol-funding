@@ -14,7 +14,7 @@ export type DataContainer = {
 export type BotConfig = {
   developerAbbreviation: string;
   addressLimit: number;
-  aztecAddressByChainId: {
+  aztecAddressesByChainId: {
     [chainId: number]: string[];
   };
 };

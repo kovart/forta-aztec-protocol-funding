@@ -29,7 +29,9 @@ const provideInitialize = (
     data.logger = logger;
     data.provider = provider;
     data.isDevelopment = isDevelopment;
-    data.aztecAddresses = config.aztecAddressByChainId[network.chainId].map((a) => a.toLowerCase());
+    data.aztecAddresses = config.aztecAddressesByChainId[network.chainId].map((a) =>
+      a.toLowerCase(),
+    );
     data.addressLimit = config.addressLimit;
     data.fundedAddresses = new Set();
     data.isInitialized = true;
