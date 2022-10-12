@@ -54,7 +54,7 @@ const provideHandleTransaction = (data: DataContainer): HandleTransaction => {
           // check if transferred value is greater than 0
           if (trace.action.value !== '0x0') {
             // check if the funds are transferred to EOA
-            if ((await data.provider.getCode(txEvent.to)) === '0x') {
+            if ((await data.provider.getCode(trace.action.to)) === '0x') {
               // add account to trackable address set
               data.fundedAddresses.add(trace.action.to.toLowerCase());
               // check if the trackable address set is exceeded
