@@ -2,6 +2,10 @@
   "name": "ak-aztec-protocol-funding",
   "version": "0.0.1",
   "description": "The bot detects when an account that was funded by Aztec Protocol interacts with any contract",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kovart/forta-aztec-protocol-funding"
+  },
   "chainIds": [
     1
   ],
