@@ -1,11 +1,12 @@
+import BigNumber from 'bignumber.js';
 import { ethers } from 'ethers';
 import { createAddress } from 'forta-agent-tools';
 import { TestTransactionEvent } from 'forta-agent-tools/lib/test';
 import { HandleTransaction, Network } from 'forta-agent';
 import { BotConfig, DataContainer } from './types';
 import { Logger, LoggerLevel } from './logger';
+import { createInteractionFinding, createFundingFinding } from './findings';
 import agent from './agent';
-import { createFinding } from './findings';
 
 const { provideInitialize, provideHandleTransaction } = agent;
 
@@ -33,6 +34,8 @@ describe('Forta agent', () => {
 
       expect(data.isInitialized).toStrictEqual(true);
       expect(data.isDevelopment).toStrictEqual(true);
+      expect(data.chainId).toStrictEqual(network);
+      expect(data.findings).toStrictEqual([]);
       expect(data.aztecAddresses).toEqual(expect.arrayContaining([aztecAddress1, aztecAddress2]));
       expect(data.logger).toStrictEqual(logger);
       expect(data.provider).toStrictEqual(provider);
@@ -44,21 +47,21 @@ describe('Forta agent', () => {
     let mockProvider: jest.MockedObject<ethers.providers.JsonRpcProvider>;
     let handleTransaction: HandleTransaction;
 
+    const aztecAddress = createAddress('0x2222');
     const invokerAddress = createAddress('0x1111');
-    const aztecAddress1 = createAddress('0x2222');
     const someContractAddress = createAddress('0x00FF');
 
     const defaultNetwork = Network.MAINNET;
     const defaultBotConfig: BotConfig = {
       developerAbbreviation: 'TEST',
-      aztecAddressesByChainId: { [defaultNetwork]: [aztecAddress1] },
+      aztecAddressesByChainId: { [defaultNetwork]: [aztecAddress] },
       addressLimit: 10000,
     };
 
     // mock getCode so that agent knows whether the address is a contract or not
     function mockContractAddresses(...addresses: string[]) {
       mockProvider.getCode.mockImplementation(async (address: string | Promise<string>) =>
-        addresses.includes(<string>address) ? '0x0f0f' : '0x',
+        addresses.includes(<string>address) ? '0xff' : '0x',
       );
     }
 
@@ -72,7 +75,7 @@ describe('Forta agent', () => {
           name: Network[defaultNetwork],
         })),
       } as any;
-      mockContractAddresses(aztecAddress1, someContractAddress);
+      mockContractAddresses(aztecAddress, someContractAddress);
       const initialize = provideInitialize(
         mockData,
         defaultBotConfig,
@@ -87,7 +90,7 @@ describe('Forta agent', () => {
     it('returns empty findings if there was no funding from the service', async () => {
       let tx, findings;
       const nonAztecContractAddress = createAddress('0xAAAFFF');
-      const targetAddress = createAddress('0x9999');
+      const fundedAddress = createAddress('0xaaaa');
 
       mockContractAddresses(nonAztecContractAddress);
 
@@ -97,7 +100,7 @@ describe('Forta agent', () => {
       tx.setTo(nonAztecContractAddress);
       tx.addTraces({
         from: nonAztecContractAddress,
-        to: targetAddress,
+        to: fundedAddress,
         value: ethers.utils.parseEther('0.5').toHexString(),
       });
       findings = await handleTransaction(tx);
@@ -106,64 +109,56 @@ describe('Forta agent', () => {
 
       // contract interaction
       tx = new TestTransactionEvent();
-      tx.setFrom(targetAddress);
+      tx.setFrom(fundedAddress);
       tx.setTo(someContractAddress);
       findings = await handleTransaction(tx);
 
       expect(findings).toStrictEqual([]);
     });
 
-    it('returns empty findings if there was no contract interaction', async () => {
-      let tx, findings;
-      const targetAddress = createAddress('0x9999');
-      const eoaAddress = createAddress('0xEA1');
+    it('returns a finding if the service funded an account', async () => {
+      const fundedAddress = createAddress('0xaaaa');
+      const fundedValue = new BigNumber(ethers.utils.parseEther('0.5').toString());
 
       // funding from Aztec contract
-      tx = new TestTransactionEvent();
+      const tx = new TestTransactionEvent();
       tx.setFrom(invokerAddress);
-      tx.setTo(aztecAddress1);
+      tx.setTo(aztecAddress);
       tx.addTraces({
-        from: aztecAddress1,
-        to: targetAddress,
-        value: ethers.utils.parseEther('0.5').toHexString(),
+        from: aztecAddress,
+        to: fundedAddress,
+        value: fundedValue.toString(16),
       });
-      findings = await handleTransaction(tx);
 
-      expect(findings).toStrictEqual([]);
+      const findings = await handleTransaction(tx);
 
-      // interaction with EOA
-      tx = new TestTransactionEvent();
-      tx.setFrom(targetAddress);
-      tx.setTo(eoaAddress);
-      findings = await handleTransaction(tx);
-
-      expect(findings).toStrictEqual([]);
+      expect(findings).toStrictEqual([
+        createFundingFinding(fundedAddress, fundedValue, defaultNetwork),
+      ]);
     });
 
     it('returns a finding if an account was funded and then interacted with a contract', async () => {
-      let tx, findings;
-      const targetAddress = createAddress('0x9999');
+      const fundedAddress = createAddress('0xaaaa');
 
       // funding from Aztec contract
-      tx = new TestTransactionEvent();
+      let tx = new TestTransactionEvent();
       tx.setFrom(invokerAddress);
-      tx.setTo(aztecAddress1);
+      tx.setTo(aztecAddress);
       tx.addTraces({
-        from: aztecAddress1,
-        to: targetAddress,
+        from: aztecAddress,
+        to: fundedAddress,
         value: ethers.utils.parseEther('0.5').toHexString(),
       });
-      findings = await handleTransaction(tx);
 
-      expect(findings).toStrictEqual([]);
+      await handleTransaction(tx);
 
       // interaction with some contract
       tx = new TestTransactionEvent();
-      tx.setFrom(targetAddress);
+      tx.setFrom(fundedAddress);
       tx.setTo(someContractAddress);
-      findings = await handleTransaction(tx);
+      const findings = await handleTransaction(tx);
 
-      expect(findings).toStrictEqual([createFinding(tx.from, tx.to!)]);
+      expect(findings).toStrictEqual([createInteractionFinding(tx.from, tx.to!)]);
     });
 
     it('removes old funded accounts when address limit is exceeded', async () => {
@@ -184,13 +179,13 @@ describe('Forta agent', () => {
 
       await initialize();
 
-      async function emulateFunding(targetAddress: string) {
+      async function emulateFunding(fundedAddress: string) {
         const tx = new TestTransactionEvent();
         tx.setFrom(invokerAddress);
-        tx.setTo(aztecAddress1);
+        tx.setTo(aztecAddress);
         tx.addTraces({
-          from: aztecAddress1,
-          to: targetAddress,
+          from: aztecAddress,
+          to: fundedAddress,
           value: ethers.utils.parseEther('0.5').toHexString(),
         });
         return await handleTransaction(tx);
@@ -203,18 +198,19 @@ describe('Forta agent', () => {
         return await handleTransaction(tx);
       }
 
-      const getTestAddress = (i: number) => createAddress('0x110000' + i);
+      const getTestAddress = (i: number) => createAddress('0x4444' + i);
 
       // emulate Aztec funding
       for (let i = 0; i < addressLimit; i++) {
         const address = getTestAddress(i);
-        const findings = await emulateFunding(address);
-        expect(findings).toStrictEqual([]);
+        await emulateFunding(address);
       }
 
       // check if we detect contract interaction
       let findings = await emulateInteraction(getTestAddress(0));
-      expect(findings).toHaveLength(1);
+      expect(findings).toStrictEqual([
+        createInteractionFinding(getTestAddress(0), someContractAddress),
+      ]);
 
       // add one more funded account that causes the storage to be exceeded
       await emulateFunding(getTestAddress(addressLimit));

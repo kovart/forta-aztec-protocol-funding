@@ -1,3 +1,4 @@
+import { Finding, Network } from 'forta-agent';
 import { providers } from 'ethers';
 import { Logger } from './logger';
 
@@ -7,6 +8,8 @@ export type DataContainer = {
   aztecAddresses: string[];
   fundedAddresses: Set<string>;
   addressLimit: number;
+  chainId: Network;
+  findings: Finding[];
   isDevelopment: boolean;
   isInitialized: boolean;
 };

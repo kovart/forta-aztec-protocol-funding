@@ -1,7 +1,7 @@
 {
   "name": "ak-aztec-protocol-funding",
-  "version": "0.0.1",
-  "description": "The bot detects when an account that was funded by Aztec Protocol interacts with any contract",
+  "version": "0.0.2",
+  "description": "This bot detects when Aztec Protocol was used to fund an EOA, as well as when that EOA interacts with a contract.",
   "repository": {
     "type": "git",
     "url": "https://github.com/kovart/forta-aztec-protocol-funding"
@@ -38,6 +38,7 @@
     ]
   },
   "dependencies": {
+    "bignumber.js": "^9.1.0",
     "ethers": "^5.7.1",
     "forta-agent": "^0.1.10",
     "forta-agent-tools": "^3.1.0",
