@@ -1,6 +1,6 @@
 {
   "name": "ak-aztec-protocol-funding",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "This bot detects when Aztec Protocol was used to fund an EOA, as well as when that EOA interacts with a contract.",
   "repository": {
     "type": "git",

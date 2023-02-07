@@ -90,7 +90,11 @@ const provideHandleTransaction = (data: DataContainer): HandleTransaction => {
     // update statistics on the number of ether transfers in the network
     for (const trace of txEvent.traces) {
       // check if it is a transfer to EOA and the transferred value is greater than 0
-      if (trace.action.value !== '0x0' && (await data.provider.getCode(trace.action.to)) === '0x') {
+      if (
+        trace.action.value !== '0x0' &&
+        trace.action.to &&
+        (await data.provider.getCode(trace.action.to)) === '0x'
+      ) {
         data.analytics.incrementBotTriggers(txEvent.timestamp, AZTEC_PROTOCOL_FUNDING_ALERT_ID);
       }
     }
@@ -98,6 +102,8 @@ const provideHandleTransaction = (data: DataContainer): HandleTransaction => {
     // check if it is a transaction to aztec protocol
     if (data.aztecAddresses.includes(txEvent.to.toLowerCase())) {
       for (const trace of txEvent.traces) {
+        if (!trace.action.to) continue;
+
         // check if aztec protocol transfers funds to some account
         if (data.aztecAddresses.includes(trace.action.from.toLowerCase())) {
           // check if transferred value is greater than 0
