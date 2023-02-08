@@ -20,7 +20,7 @@ import {
 const data: DataContainer = {} as any;
 const provider = getEthersProvider();
 const isDevelopment = process.env.NODE_ENV !== 'production';
-const logger = new Logger(isDevelopment ? LoggerLevel.DEBUG : LoggerLevel.WARN);
+const logger = new Logger(isDevelopment ? LoggerLevel.DEBUG : LoggerLevel.INFO);
 const botConfig = require('../bot-config.json');
 
 // https://github.com/forta-network/forta-bot-sdk/pull/201
