@@ -153,6 +153,7 @@ describe('Forta agent', () => {
 
       expect(findings).toStrictEqual([
         createFundingFinding(
+          tx.hash,
           fundedAddress,
           fundedValue,
           defaultNetwork,

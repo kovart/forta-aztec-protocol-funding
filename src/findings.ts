@@ -15,6 +15,7 @@ export const AZTEC_PROTOCOL_FUNDING_ALERT_ID = `${botConfig.developerAbbreviatio
 export const AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID = `${botConfig.developerAbbreviation}-AZTEC-PROTOCOL-FUNDED-ACCOUNT-INTERACTION-0`;
 
 export const createFundingFinding = (
+  txHash: string,
   account: string,
   value: BigNumber,
   network: Network,
@@ -45,6 +46,7 @@ export const createFundingFinding = (
       }),
     ],
     metadata: {
+      txHash: txHash,
       anomaly_score: anomalyScore.toString(),
     },
   });
@@ -75,6 +77,7 @@ export const createInteractionFinding = (txEvent: TransactionEvent, anomalyScore
       }),
     ],
     metadata: {
+      txHash: txEvent.hash,
       anomaly_score: anomalyScore.toString(),
     },
   });

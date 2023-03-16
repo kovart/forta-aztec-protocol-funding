@@ -24,7 +24,7 @@ const logger = new Logger(isDevelopment ? LoggerLevel.DEBUG : LoggerLevel.INFO);
 const botConfig = require('../bot-config.json');
 
 // https://github.com/forta-network/forta-bot-sdk/pull/201
-const MAX_FINDINGS_PER_REQUEST = 10;
+const MAX_FINDINGS_PER_REQUEST = 50;
 
 const provideInitialize = (
   data: DataContainer,
@@ -127,6 +127,7 @@ const provideHandleTransaction = (data: DataContainer): HandleTransaction => {
               // push a finding that the account was funded
               findings.push(
                 createFundingFinding(
+                  txEvent.hash,
                   trace.action.to.toLowerCase(),
                   new BigNumber(trace.action.value, 16),
                   data.chainId,
