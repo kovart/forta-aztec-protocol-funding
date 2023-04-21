@@ -14,11 +14,32 @@ This bot detects when Aztec Protocol was used to fund an EOA, as well as when th
   - Fired when Aztec Protocol was used to fund an EOA
   - Severity is always set to "low"
   - Type is always set to "info"
+  - Labels:
+    ```
+      entityType: EntityType.Address,
+      label: 'MixerFunded',
+      confidence: 1,
+      entity: account
+    ```
+  
 
 - AK-AZTEC-PROTOCOL-FUNDED-ACCOUNT-INTERACTION-0
   - Fired when a transaction contains contract interactions from a Aztec Protocol funded account
   - Severity is always set to "low"
-  - Type is always set to "suspicious"
+  - Type is always set to "suspicious"'
+  - Labels
+    ```
+      entity: txEvent.to,
+      entityType: EntityType.Address,
+      label: 'Attacker',
+      confidence: 0.001
+    ```
+    ```
+      entity: txEvent.hash,
+      entityType: EntityType.Transaction,
+      label: 'Attack',
+      confidence: 0.001
+    ```
 
 ## Test Data
 
