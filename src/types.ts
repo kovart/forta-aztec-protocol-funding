@@ -21,6 +21,7 @@ export type BotConfig = {
   defaultAnomalyScore: {
     funding: number;
     interaction: number;
+    deployment: number;
   };
   addressLimit: number;
   aztecAddressesByChainId: {

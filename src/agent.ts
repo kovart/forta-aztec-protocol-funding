@@ -1,24 +1,31 @@
 import { providers } from 'ethers';
 import BigNumber from 'bignumber.js';
 import {
+  getStorageContractAddresses,
+  getOpcodeContractAddresses,
+  getCreatedContracts,
+} from 'forta-helpers';
+import {
   Finding,
   Initialize,
   HandleTransaction,
   TransactionEvent,
-  getEthersProvider,
+  getEthersBatchProvider,
 } from 'forta-agent';
 import { BotAnalytics, FortaBotStorage, InMemoryBotStorage } from 'forta-bot-analytics';
 import { Logger, LoggerLevel } from './logger';
 import { BotConfig, DataContainer } from './types';
 import {
-  AZTEC_PROTOCOL_FUNDING_ALERT_ID,
-  AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
+  FUNDING_ALERT_ID,
+  FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
   createFundingFinding,
   createInteractionFinding,
+  createDeploymentFinding,
+  FUNDED_ACCOUNT_DEPLOYMENT_ALERT_ID,
 } from './findings';
 
 const data: DataContainer = {} as any;
-const provider = getEthersProvider();
+const provider = getEthersBatchProvider();
 const isDevelopment = process.env.NODE_ENV !== 'production';
 const logger = new Logger(isDevelopment ? LoggerLevel.DEBUG : LoggerLevel.INFO);
 const botConfig = require('../bot-config.json');
@@ -50,11 +57,11 @@ const provideInitialize = (
         key: chainId.toString(),
         syncTimeout: 30 * 60, // 30m
         maxSyncDelay: 7 * 24 * 60 * 60, // 7d
-        observableInterval: 24 * 60 * 60, // 1d
+        observableInterval: 5 * 24 * 60 * 60, // 5d
         defaultAnomalyScore: {
-          [AZTEC_PROTOCOL_FUNDING_ALERT_ID]: config.defaultAnomalyScore.funding,
-          [AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID]:
-            config.defaultAnomalyScore.interaction,
+          [FUNDING_ALERT_ID]: config.defaultAnomalyScore.funding,
+          [FUNDED_ACCOUNT_INTERACTION_ALERT_ID]: config.defaultAnomalyScore.interaction,
+          [FUNDED_ACCOUNT_DEPLOYMENT_ALERT_ID]: config.defaultAnomalyScore.deployment,
         },
         logFn: logger.info,
       },
@@ -73,19 +80,57 @@ const provideHandleTransaction = (data: DataContainer): HandleTransaction => {
 
     await data.analytics.sync(txEvent.timestamp);
 
+    const createdContracts = getCreatedContracts(txEvent);
+
+    if (createdContracts.length > 0) {
+      // update statistics on the number of contract creations
+      createdContracts.forEach(() =>
+        data.analytics.incrementBotTriggers(txEvent.timestamp, FUNDED_ACCOUNT_DEPLOYMENT_ALERT_ID),
+      );
+
+      // check if the contract has been deployed by one of the funded accounts
+      if (data.fundedAddresses.has(txEvent.from.toLowerCase())) {
+        // update statistics on the number of suspicious contract creations
+        createdContracts.forEach(() =>
+          data.analytics.incrementAlertTriggers(
+            txEvent.timestamp,
+            FUNDED_ACCOUNT_DEPLOYMENT_ALERT_ID,
+          ),
+        );
+
+        for (const contract of createdContracts) {
+          const contractsInStorage = await getStorageContractAddresses(
+            contract.address,
+            data.provider,
+            undefined,
+            txEvent.blockNumber,
+          );
+          const contractsInOpcode = await getOpcodeContractAddresses(
+            await data.provider.getCode(contract.address),
+            data.provider,
+          );
+
+          data.findings.push(
+            createDeploymentFinding(
+              txEvent.hash,
+              txEvent.from.toLowerCase(),
+              contract.address.toLowerCase(),
+              [...contractsInStorage, ...contractsInOpcode],
+              data.analytics.getAnomalyScore(FUNDED_ACCOUNT_DEPLOYMENT_ALERT_ID),
+            ),
+          );
+        }
+      }
+    }
+
     const getFindingsBatch = () => findings.splice(0, MAX_FINDINGS_PER_REQUEST);
 
     if (!txEvent.to) return getFindingsBatch();
 
-    // check if it is an interaction to a contract
-    if ((await data.provider.getCode(txEvent.to)) !== '0x') {
-      data.analytics.incrementBotTriggers(
-        txEvent.timestamp,
-        AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
-      );
-    } else {
-      return getFindingsBatch();
-    }
+    // check if it is an interaction to an EOA
+    if ((await data.provider.getCode(txEvent.to)) === '0x') return getFindingsBatch();
+
+    data.analytics.incrementBotTriggers(txEvent.timestamp, FUNDED_ACCOUNT_INTERACTION_ALERT_ID);
 
     // update statistics on the number of ether transfers in the network
     for (const trace of txEvent.traces) {
@@ -95,7 +140,7 @@ const provideHandleTransaction = (data: DataContainer): HandleTransaction => {
         trace.action.to &&
         (await data.provider.getCode(trace.action.to)) === '0x'
       ) {
-        data.analytics.incrementBotTriggers(txEvent.timestamp, AZTEC_PROTOCOL_FUNDING_ALERT_ID);
+        data.analytics.incrementBotTriggers(txEvent.timestamp, FUNDING_ALERT_ID);
       }
     }
 
@@ -120,10 +165,7 @@ const provideHandleTransaction = (data: DataContainer): HandleTransaction => {
                 data.fundedAddresses.delete(first);
               }
 
-              data.analytics.incrementAlertTriggers(
-                txEvent.timestamp,
-                AZTEC_PROTOCOL_FUNDING_ALERT_ID,
-              );
+              data.analytics.incrementAlertTriggers(txEvent.timestamp, FUNDING_ALERT_ID);
               // push a finding that the account was funded
               findings.push(
                 createFundingFinding(
@@ -131,7 +173,7 @@ const provideHandleTransaction = (data: DataContainer): HandleTransaction => {
                   trace.action.to.toLowerCase(),
                   new BigNumber(trace.action.value, 16),
                   data.chainId,
-                  data.analytics.getAnomalyScore(AZTEC_PROTOCOL_FUNDING_ALERT_ID),
+                  data.analytics.getAnomalyScore(FUNDING_ALERT_ID),
                 ),
               );
             }
@@ -140,14 +182,11 @@ const provideHandleTransaction = (data: DataContainer): HandleTransaction => {
       }
       // check if the funded account interacts with a contract
     } else if (data.fundedAddresses.has(txEvent.from.toLowerCase())) {
-      data.analytics.incrementAlertTriggers(
-        txEvent.timestamp,
-        AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
-      );
+      data.analytics.incrementAlertTriggers(txEvent.timestamp, FUNDED_ACCOUNT_INTERACTION_ALERT_ID);
       findings.push(
         createInteractionFinding(
           txEvent,
-          data.analytics.getAnomalyScore(AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID),
+          data.analytics.getAnomalyScore(FUNDED_ACCOUNT_INTERACTION_ALERT_ID),
         ),
       );
     }

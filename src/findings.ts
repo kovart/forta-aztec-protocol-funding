@@ -11,8 +11,9 @@ import {
 
 const botConfig = require('../bot-config.json');
 
-export const AZTEC_PROTOCOL_FUNDING_ALERT_ID = `${botConfig.developerAbbreviation}-AZTEC-PROTOCOL-FUNDING`;
-export const AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID = `${botConfig.developerAbbreviation}-AZTEC-PROTOCOL-FUNDED-ACCOUNT-INTERACTION-0`;
+export const FUNDING_ALERT_ID = `${botConfig.developerAbbreviation}-AZTEC-PROTOCOL-FUNDING`;
+export const FUNDED_ACCOUNT_INTERACTION_ALERT_ID = `${botConfig.developerAbbreviation}-AZTEC-PROTOCOL-FUNDED-ACCOUNT-INTERACTION-0`;
+export const FUNDED_ACCOUNT_DEPLOYMENT_ALERT_ID = `${botConfig.developerAbbreviation}-AZTEC-PROTOCOL-FUNDED-ACCOUNT-DEPLOYMENT`;
 
 export const createFundingFinding = (
   txHash: string,
@@ -28,7 +29,7 @@ export const createFundingFinding = (
   const etherValue = value.div(new BigNumber(10).pow(18));
 
   return Finding.from({
-    alertId: AZTEC_PROTOCOL_FUNDING_ALERT_ID,
+    alertId: FUNDING_ALERT_ID,
     name: 'Aztec Protocol Funding',
     description: `Account ${account} was funded by ${etherValue.toFormat()} ${
       tokenSymbolByNetwork[network]
@@ -41,20 +42,19 @@ export const createFundingFinding = (
         entityType: EntityType.Address,
         label: 'MixerFunded',
         confidence: 1,
-        entity: account,
-        remove: false,
+        entity: account
       }),
     ],
     metadata: {
       txHash: txHash,
-      anomaly_score: anomalyScore.toString(),
+      anomalyScore: anomalyScore.toString(),
     },
   });
 };
 
 export const createInteractionFinding = (txEvent: TransactionEvent, anomalyScore: number) => {
   return Finding.from({
-    alertId: AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
+    alertId: FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
     name: 'Aztec Protocol funded account interacted with a contract',
     description: `${txEvent.from} interacted with contract ${txEvent.to}`,
     severity: FindingSeverity.Low,
@@ -65,20 +65,54 @@ export const createInteractionFinding = (txEvent: TransactionEvent, anomalyScore
         entity: txEvent.to!,
         entityType: EntityType.Address,
         label: 'Attacker',
-        confidence: 0.001,
-        remove: false,
+        confidence: 0.001
       }),
       Label.fromObject({
         entity: txEvent.hash,
         entityType: EntityType.Transaction,
         label: 'Attack',
-        confidence: 0.001,
-        remove: false,
+        confidence: 0.001
       }),
     ],
     metadata: {
       txHash: txEvent.hash,
-      anomaly_score: anomalyScore.toString(),
+      anomalyScore: anomalyScore.toString(),
     },
+  });
+};
+
+export const createDeploymentFinding = (
+  txHash: string,
+  account: string,
+  contractAddress: string,
+  containedAddresses: string[],
+  anomalyScore: number,
+) => {
+  return Finding.fromObject({
+    alertId: FUNDED_ACCOUNT_DEPLOYMENT_ALERT_ID,
+    name: 'Suspicious Contract Creation by Aztec Protocol funded account',
+    description: `${account} created contract ${contractAddress}`,
+    severity: FindingSeverity.High,
+    type: FindingType.Suspicious,
+    addresses: [account, contractAddress, ...containedAddresses],
+    labels: [
+      Label.fromObject({
+        entityType: EntityType.Address,
+        label: 'Attacker',
+        confidence: 0.1,
+        entity: account
+      }),
+      Label.fromObject({
+        entityType: EntityType.Address,
+        label: 'Exploit',
+        confidence: 0.1,
+        entity: contractAddress
+      }),
+    ],
+    metadata: {
+      txHash: txHash,
+      containedAddresses: JSON.stringify(containedAddresses),
+      anomalyScore: anomalyScore.toString(),
+    }
   });
 };

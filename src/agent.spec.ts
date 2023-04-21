@@ -1,18 +1,19 @@
 import BigNumber from 'bignumber.js';
-import { ethers } from 'ethers';
+import { BigNumberish, ethers } from 'ethers';
 import { createAddress } from 'forta-agent-tools';
 import { TestTransactionEvent } from 'forta-agent-tools/lib/test';
+import { BotAnalytics } from 'forta-bot-analytics';
 import { HandleTransaction, Network } from 'forta-agent';
 import { BotConfig, DataContainer } from './types';
 import { Logger, LoggerLevel } from './logger';
 import {
   createInteractionFinding,
   createFundingFinding,
-  AZTEC_PROTOCOL_FUNDING_ALERT_ID,
-  AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
+  FUNDING_ALERT_ID,
+  FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
+  createDeploymentFinding, FUNDED_ACCOUNT_DEPLOYMENT_ALERT_ID,
 } from './findings';
 import agent from './agent';
-import { BotAnalytics } from 'forta-bot-analytics';
 
 const { provideInitialize, provideHandleTransaction } = agent;
 
@@ -36,6 +37,7 @@ describe('Forta agent', () => {
         defaultAnomalyScore: {
           funding: 0.123,
           interaction: 0.321,
+          deployment: 0.222,
         },
       };
       const initialize = provideInitialize(data, config, provider, logger, false);
@@ -59,6 +61,9 @@ describe('Forta agent', () => {
     let mockData: DataContainer;
     let mockProvider: jest.MockedObject<ethers.providers.JsonRpcProvider>;
 
+    const bytecodeByAddress = new Map<string, string>();
+    const storageByAddress = new Map<string, string[]>();
+
     let handleTransaction: HandleTransaction;
 
     const aztecAddress = createAddress('0x2222');
@@ -73,35 +78,92 @@ describe('Forta agent', () => {
       defaultAnomalyScore: {
         funding: 0.123,
         interaction: 0.321,
+        deployment: 0.222,
       },
     };
 
     // mock getCode so that agent knows whether the address is a contract or not
     function mockContractAddresses(...addresses: string[]) {
-      mockProvider.getCode.mockImplementation(async (address: string | Promise<string>) =>
-        addresses.includes(<string>address) ? '0xff' : '0x',
-      );
+      for (const address of addresses) {
+        bytecodeByAddress.set(address, '0xff');
+      }
+    }
+
+    function mockContractDeployment(
+      tx: TestTransactionEvent,
+      deployer: string,
+      contractAddress: string,
+      storageContracts: string[] = [],
+      opcodeContracts: string[] = [],
+    ) {
+      tx.traces.push({
+        type: 'create',
+        blockNumber: 0,
+        traceAddress: [],
+        subtraces: 0,
+        transactionHash: '0x',
+        transactionPosition: 0,
+        error: '',
+        blockHash: '0x',
+        action: {
+          from: deployer,
+          to: '',
+        } as any,
+        result: {
+          address: contractAddress,
+        } as any,
+      });
+
+      if (storageContracts.length > 0) {
+        storageByAddress.set(
+          contractAddress,
+          storageContracts.map((c, i) =>
+            i % 2 == 0 ? '0x' + c.slice(2).padStart(64, '0') : c.padEnd(66, '0'),
+          ),
+        );
+      }
+      if (opcodeContracts.length > 0) {
+        bytecodeByAddress.set(
+          contractAddress,
+          '0x' + opcodeContracts.map((c) => `73${c.slice(2)}`).join(''),
+        );
+      }
     }
 
     beforeEach(async () => {
       mockData = {} as any;
       mockProvider = {
         getCode: jest.fn(),
-        // make the agent think we are in the target network
+        getStorageAt: jest.fn(),
         getNetwork: jest.fn().mockImplementation(async () => ({
           chainId: defaultNetwork.valueOf(),
           name: Network[defaultNetwork],
         })),
       } as any;
-      const initialize = provideInitialize(
+
+      bytecodeByAddress.clear();
+      storageByAddress.clear();
+
+      handleTransaction = provideHandleTransaction(mockData);
+
+      await provideInitialize(
         mockData,
         defaultBotConfig,
         mockProvider,
         new Logger(LoggerLevel.ERROR),
         true,
-      );
-      handleTransaction = provideHandleTransaction(mockData);
-      await initialize();
+      )();
+
+      mockProvider.getCode.mockImplementation(async (address) => {
+        return bytecodeByAddress.get(await address) || '0x';
+      });
+
+      mockProvider.getStorageAt.mockImplementation(async (address, position) => {
+        return (
+          storageByAddress.get(await address)?.[Number(position.toString())] ||
+          ethers.constants.HashZero
+        );
+      });
 
       mockContractAddresses(aztecAddress, someContractAddress);
     });
@@ -186,6 +248,97 @@ describe('Forta agent', () => {
       expect(findings).toStrictEqual([
         createInteractionFinding(tx, defaultBotConfig.defaultAnomalyScore.interaction),
       ]);
+    });
+
+    it('returns a finding if an account was funded and then created a contract', async () => {
+      const fundedAddress = createAddress('0xaaaa');
+      const regularAddress = createAddress('0xbbbb');
+      const createdContract0 = createAddress('0xff0');
+      const createdContract1 = createAddress('0xff1');
+      const createdContract2 = createAddress('0xff2');
+      const createdContract3 = createAddress('0xff3');
+      const createdContract4 = createAddress('0xff4');
+
+      // funding from Aztec contract
+      let tx = new TestTransactionEvent();
+      tx.setFrom(invokerAddress);
+      tx.setTo(aztecAddress);
+      tx.addTraces({
+        from: aztecAddress,
+        to: fundedAddress,
+        value: ethers.utils.parseEther('0.5').toHexString(),
+      });
+
+      await handleTransaction(tx);
+
+      tx = new TestTransactionEvent();
+      tx.setFrom(regularAddress);
+      tx.setTo('');
+
+      let findings = await handleTransaction(tx);
+      mockContractDeployment(tx, regularAddress, createdContract0);
+
+      expect(findings).toHaveLength(0);
+
+      tx = new TestTransactionEvent();
+      tx.setFrom(fundedAddress);
+      tx.setTo('');
+
+      const opcodeContracts = [createAddress('0x6666'), createAddress('0x5555')];
+      const storageContracts = [createAddress('0x8888'), createAddress('0x9999')];
+
+      mockContractAddresses(...opcodeContracts, ...storageContracts);
+
+      mockContractDeployment(tx, fundedAddress, createdContract1);
+      mockContractDeployment(
+        tx,
+        fundedAddress,
+        createdContract2,
+        storageContracts,
+        opcodeContracts,
+      );
+      mockContractDeployment(tx, fundedAddress, createdContract3, [], opcodeContracts);
+      mockContractDeployment(tx, fundedAddress, createdContract4, storageContracts, []);
+
+      findings = await handleTransaction(tx);
+
+      expect(findings).toHaveLength(4);
+      expect(findings).toContainEqual(
+        createDeploymentFinding(
+          tx.hash,
+          fundedAddress,
+          createdContract1,
+          [],
+          defaultBotConfig.defaultAnomalyScore.deployment,
+        ),
+      );
+      expect(findings).toContainEqual(
+        createDeploymentFinding(
+          tx.hash,
+          fundedAddress,
+          createdContract2,
+          [...storageContracts, ...opcodeContracts],
+          defaultBotConfig.defaultAnomalyScore.deployment,
+        ),
+      );
+      expect(findings).toContainEqual(
+        createDeploymentFinding(
+          tx.hash,
+          fundedAddress,
+          createdContract3,
+          opcodeContracts,
+          defaultBotConfig.defaultAnomalyScore.deployment,
+        ),
+      );
+      expect(findings).toContainEqual(
+        createDeploymentFinding(
+          tx.hash,
+          fundedAddress,
+          createdContract4,
+          storageContracts,
+          defaultBotConfig.defaultAnomalyScore.deployment,
+        ),
+      );
     });
 
     it('removes old funded accounts when address limit is exceeded', async () => {
@@ -308,13 +461,11 @@ describe('Forta agent', () => {
       expect(mockAnalytics.sync).toBeCalledWith(20);
       expect(mockAnalytics.incrementBotTriggers).toHaveBeenCalledTimes(3);
       expect(
-        mockAnalytics.incrementBotTriggers.mock.calls.filter(
-          (c) => c[1] === AZTEC_PROTOCOL_FUNDING_ALERT_ID,
-        ),
+        mockAnalytics.incrementBotTriggers.mock.calls.filter((c) => c[1] === FUNDING_ALERT_ID),
       ).toHaveLength(2);
       expect(
         mockAnalytics.incrementBotTriggers.mock.calls.filter(
-          (c) => c[1] === AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
+          (c) => c[1] === FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
         ),
       ).toHaveLength(1);
       expect(mockAnalytics.incrementAlertTriggers).toBeCalledTimes(0);
@@ -340,21 +491,16 @@ describe('Forta agent', () => {
       expect(mockAnalytics.sync).toBeCalledWith(30);
       expect(mockAnalytics.incrementBotTriggers).toBeCalledTimes(2);
       expect(
-        mockAnalytics.incrementBotTriggers.mock.calls.filter(
-          (c) => c[1] === AZTEC_PROTOCOL_FUNDING_ALERT_ID,
-        ),
+        mockAnalytics.incrementBotTriggers.mock.calls.filter((c) => c[1] === FUNDING_ALERT_ID),
       ).toHaveLength(1);
       expect(
         mockAnalytics.incrementBotTriggers.mock.calls.filter(
-          (c) => c[1] === AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
+          (c) => c[1] === FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
         ),
       ).toHaveLength(1);
 
       expect(mockAnalytics.incrementAlertTriggers).toBeCalledTimes(1);
-      expect(mockAnalytics.incrementAlertTriggers).toBeCalledWith(
-        30,
-        AZTEC_PROTOCOL_FUNDING_ALERT_ID,
-      );
+      expect(mockAnalytics.incrementAlertTriggers).toBeCalledWith(30, FUNDING_ALERT_ID);
 
       mockAnalytics.sync.mockClear();
       mockAnalytics.incrementBotTriggers.mockClear();
@@ -373,11 +519,41 @@ describe('Forta agent', () => {
       expect(mockAnalytics.incrementAlertTriggers).toBeCalledTimes(1);
       expect(mockAnalytics.incrementBotTriggers).toBeCalledWith(
         40,
-        AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
+        FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
       );
       expect(mockAnalytics.incrementAlertTriggers).toBeCalledWith(
         40,
-        AZTEC_PROTOCOL_FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
+        FUNDED_ACCOUNT_INTERACTION_ALERT_ID,
+      );
+
+      mockAnalytics.sync.mockClear();
+      mockAnalytics.incrementBotTriggers.mockClear();
+      mockAnalytics.incrementAlertTriggers.mockClear();
+
+      const deployedContract1 = createAddress('0xff1')
+      const deployedContract2 = createAddress('0xff2')
+
+      // contract deployment
+      tx = new TestTransactionEvent();
+      tx.setTimestamp(40);
+      tx.setFrom(fundedAddress);
+      tx.setTo('');
+
+      mockContractDeployment(tx, fundedAddress, deployedContract1)
+      mockContractDeployment(tx, fundedAddress, deployedContract2)
+
+      await handleTransaction(tx);
+
+      expect(mockAnalytics.sync).toBeCalledWith(40);
+      expect(mockAnalytics.incrementBotTriggers).toBeCalledTimes(2);
+      expect(mockAnalytics.incrementAlertTriggers).toBeCalledTimes(2);
+      expect(mockAnalytics.incrementBotTriggers).toBeCalledWith(
+        40,
+        FUNDED_ACCOUNT_DEPLOYMENT_ALERT_ID,
+      );
+      expect(mockAnalytics.incrementAlertTriggers).toBeCalledWith(
+        40,
+        FUNDED_ACCOUNT_DEPLOYMENT_ALERT_ID,
       );
     });
   });

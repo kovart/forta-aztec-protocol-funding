@@ -41,6 +41,26 @@ This bot detects when Aztec Protocol was used to fund an EOA, as well as when th
       confidence: 0.001
     ```
 
+- AK-AZTEC-PROTOCOL-FUNDED-ACCOUNT-DEPLOYMENT
+  - Fired when an account funded via Aztec Protocol deployed a contract
+  - Severity is always set to "high"
+  - Type is always set to "suspicious"'
+  - Metadata:
+    - containedAddresses: an array of addresses found inside the contract bytecode and storage slots.
+  - Labels
+    ```
+      entityType: EntityType.Address,
+      label: 'Attacker',
+      confidence: 0.1,
+      entity: account
+    ```
+    ```
+      entityType: EntityType.Address,
+      label: 'Exploit',
+      confidence: 0.1,
+      entity: contractAddress
+    ```
+
 ## Test Data
 
 #### AZTEC-PROTOCOL-FUNDING
